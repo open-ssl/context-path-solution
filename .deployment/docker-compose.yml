@@ -1,0 +1,128 @@
+name: context-path
+
+networks:
+  contextpath-network:
+    driver: bridge
+
+volumes:
+  timescale-data:
+  redis-data:
+
+services:
+  nats:
+    container_name: contextpath-nats
+    image: nats:2-alpine
+    command: ["-js"]
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "4222"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  redis:
+    container_name: contextpath-redis
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  timescaledb:
+    container_name: contextpath-timescaledb
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-contextpath}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-contextpath}
+      POSTGRES_DB: ${POSTGRES_DB:-contextpath}
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \({POSTGRES_USER:-contextpath} -d\){POSTGRES_DB:-contextpath}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  server:
+    container_name: contextpath-server
+    build:
+      context: .
+      dockerfile: services/server/Dockerfile
+    env_file: .env
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  popup-writer:
+    container_name: contextpath-popup-writer
+    build:
+      context: .
+      dockerfile: services/popup_writer/Dockerfile
+    env_file: .env
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  streamer:
+    container_name: contextpath-streamer
+    build:
+      context: .
+      dockerfile: services/streamer/Dockerfile
+    env_file: .env
+    volumes:
+      - ${DATA_DIR:-./data}:/data:ro
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - contextpath-network
+    restart: "no"
+
+  agent:
+    container_name: contextpath-agent
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    env_file: .env
+    volumes:
+      - ${RULES_FILE:-./rules.json}:/rules.json:ro
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - contextpath-network
+    restart: unless-stopped

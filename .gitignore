@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+uv.lock.bak
+*.egg-info/
+dist/
+build/
+.DS_Store
+
+# Data directory (track .gitkeep, ignore raw .tar.gz datasets)
+data/*
+!data/.gitkeep
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE & Editors
+.idea/
+.vscode/
+.cursor
+*.swp
+*.swo

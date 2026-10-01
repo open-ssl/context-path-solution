@@ -1,0 +1,18 @@
+[
+  {
+    "id": "rule_01_default_click",
+    "title": "Default Activity Monitor",
+    "trigger_events": [
+      "click",
+      "clipboard_change"
+    ],
+    "conditions": {
+      "active_window": "*",
+      "clipboard": null
+    },
+    "formatters": {
+      "title": "User Action Detected",
+      "text": "Event triggered on window: {active_window}"
+    }
+  }
+]

@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# Pre-commit hook that runs code formatting.
+# Runs `make format` and blocks the commit on failure.
+
+echo "Running code formatter..."
+
+if ! make format; then
+    echo "❌ Error: Code formatting failed!"
+    echo "Please fix the errors and try again."
+    exit 1
+fi
+
+echo "✅ Code formatting completed successfully"
+exit 0
