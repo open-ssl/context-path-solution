@@ -25,3 +25,9 @@ data/*
 .cursor
 *.swp
 *.swo
+
+# Coverage reports
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

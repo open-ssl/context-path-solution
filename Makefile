@@ -25,6 +25,13 @@ build:
 test:
 	uv run pytest
 
+test-cov:
+	uv run --with pytest-cov pytest --cov --cov-report=term-missing
+
+test-html-cov:
+	uv run --with pytest-cov pytest --cov --cov-report=html
+	@echo "📊 HTML report generated at htmlcov/index.html"
+
 lint:
 	uv run ruff check .
 

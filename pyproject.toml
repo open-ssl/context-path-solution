@@ -11,6 +11,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "mypy>=1.13",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.ruff]
@@ -67,7 +68,33 @@ docstring-code-format = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["shared", "services"]
+pythonpath = [
+  "shared/src",
+  "services/server/src",
+  "services/popup_writer/src",
+  "services/streamer/src",
+  "services/agent/src"
+]
+testpaths = [
+  "shared/tests",
+  "services/server/tests",
+  "services/popup_writer/tests",
+  "services/streamer/tests",
+  "services/agent/tests"
+]
+
+[tool.coverage.run]
+source = [
+  "shared/src/shared",
+  "services/server/src/server",
+  "services/popup_writer/src/popup_writer",
+  "services/streamer/src/streamer",
+  "services/agent/src/agent"
+]
+omit = [
+  "*/tests/*",
+  "*/__pycache__/*"
+]
 
 [tool.poe]
 envfile = [".env"]
