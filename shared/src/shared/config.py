@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     TICK_MS: int = 25
     SERVER_PORT: int = 8080
 
+    # popup_writer batching: flush on size threshold or elapsed interval, whichever first.
+    WRITER_BATCH_SIZE: int = 100
+    WRITER_FLUSH_INTERVAL: float = 5.0
+
     # API documentation
     DOCS_URL: str = "/api"
     OPENAPI_URL: str = "/api/openapi.json"
