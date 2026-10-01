@@ -19,16 +19,22 @@
 - uv workspace monorepo. Shared logic lives in `shared/`; each service is a workspace member under `services/*`.
 - Package distribution name is `cp-shared`, imported in Python code as `shared` (configured via `packages = ["src/shared"]`).
 - Root `--project-directory .` is used for all Docker Compose and build contexts.
-- Each service owns its `Dockerfile`, `pyproject.toml`, and `src//` package.
+- Each service owns its `Dockerfile`, `pyproject.toml`, and `src/<name>/` package.
 - Services depend on `cp-shared`; never duplicate shared models or the rule engine.
+- Standard layered layout inside every service's `src/<name>/` package:
+  - `api/` — routers and HTTP endpoints (FastAPI `APIRouter`).
+  - `core/` — cross-cutting setup (cache backend, clients, app wiring).
+  - `db/` — connection pools, DDL/migrations, and repositories (SQL lives here).
+  - `services/` — business logic (orchestration, caching decorators).
+  - `main.py` — assembly point only: builds the app, manages the lifespan, wires routers. No business logic.
 
 ## Architecture
 
 - CQRS. Write path: `streamer -> agent -> popup-writer`. Read path: `server`.
 - `streamer`: edge recorder replay. One asyncio task per `/data/*.tar.gz`. Streams tar members without unpacking to disk; k-way merge by `ts` into one-second ticks paced by `TICK_MS`. Publishes `ticks.`.
 - `agent`: rule engine. One task per recording. Keeps screen/context state (focus window, clipboard, per-display OCR). Resolves `{click}` text by correlating click coordinates with OCR bounding boxes. Edge-triggered firing. Emits `RuleMatch` from engine, attaches `employee_id` and `ts`, then publishes `popups.detected`.
-- `popup-writer`: dual-write — synchronous Redis cache update plus batched `executemany` into TimescaleDB.
-- `server`: serves `GET /audit?employee=&rule=` on port 8080, Redis first with TimescaleDB fallback.
+- `popup-writer`: writes popups **only to TimescaleDB** (the source of truth), via batched `executemany`. It does NOT write to Redis — the read cache is owned and populated by `server`.
+- `server`: serves `GET /audit?employee=&rule=` on port 8080. Read-through caching via `fastapi-cache2` with a Redis backend, TTL 60s: keyed queries (with `employee`) are cached; unkeyed queries bypass the cache and hit TimescaleDB directly to avoid caching heavy scans. Swagger UI is served at `/api` and the OpenAPI JSON at `/api/openapi.json`.
 
 ## Conventions
 

@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     TICK_MS: int = 25
     SERVER_PORT: int = 8080
 
+    # API documentation
+    DOCS_URL: str = "/api"
+    OPENAPI_URL: str = "/api/openapi.json"
+    TITLE: str = "Activity Monitoring Read API"
+
     # NATS
     NATS_HOST: str = "nats"
     NATS_PORT: int = 4222
@@ -44,6 +49,21 @@ class Settings(BaseSettings):
             f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
+
+    @computed_field
+    @property
+    def docs_url(self) -> str:
+        return self.DOCS_URL
+
+    @computed_field
+    @property
+    def openapi_url(self) -> str:
+        return self.OPENAPI_URL
+
+    @computed_field
+    @property
+    def title(self) -> str:
+        return self.TITLE
 
 
 settings = Settings()
