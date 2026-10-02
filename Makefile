@@ -5,7 +5,7 @@ define load_env
 	$(eval export)
 endef
 
-.PHONY: open_project run run-fg deploy build down logs test test-cov test-html-cov lint format
+.PHONY: open_project run run-fg deploy build down logs test test-cov test-html-cov lint format benchmark
 
 PROJECT_PATH ?= .
 COMPOSE := docker compose -f .deployment/docker-compose.yml --project-directory .
@@ -60,3 +60,6 @@ format:
 		echo "✅ Pre-commit hook installed"; \
 	fi
 	@uv run poe format
+
+benchmark:
+	@uv run poe benchmark

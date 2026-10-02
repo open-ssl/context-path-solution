@@ -116,3 +116,7 @@ sequence = [
     { ref = "ruff-lint" },
     { ref = "ruff-format" },
 ]
+
+[tool.poe.tasks.benchmark]
+help = "Measure peak CPU/RAM of the running stack under streaming + /audit load"
+shell = "uv run python dev/scripts/benchmark.py"

@@ -26,6 +26,16 @@ make down      # stop the stack        make test   # uv run pytest --cov
 make logs      # follow service logs    make lint   # ruff check + format
 ```
 
+## Services
+
+| Service        | Role                                                                    |
+| -------------- | ----------------------------------------------------------------------- |
+| `streamer`     | Lazily replays `.tar.gz` recordings (K-way merge by `ts`), emits per-employee `events.raw.{id}` batches. |
+| `agent`        | Evaluates `rules.json` per employee, emits popups to `popups.detected`. |
+| `popup_writer` | Batches popups into TimescaleDB (idempotent, source of truth).          |
+| `server`       | Serves `GET /audit?employee=<id>&rule=<id>` on port 8080.               |
+
+
 ## Data & NATS flow
 
 From a raw recorded event to a row in TimescaleDB and out through `/audit`:
@@ -83,18 +93,35 @@ into URLs/DSNs inside `shared/config.py` via Pydantic `@computed_field`; the hos
 
 ## Load & resource envelope
 
-Target single-host envelope for the take-home dataset (3 employees, ~14k events/archive).
-Resource figures are design targets, not a benchmarked SLA.
+Single-host resource envelope for the take-home dataset (3 employees, ~14k raw events across archives). Below are both the **real benchmarked metrics** (measured under streaming workload + API load) and the initial **design target caps**.
 
-| Component    | CPU (target) | RAM (target) | Notes                                             |
-| ------------ | ------------ | ------------ | ------------------------------------------------- |
+### Measured Benchmark (Actual Run)
+
+Measured via `scripts/benchmark.py` during streaming replay (~1m 45s total replay duration) under concurrent **100 RPS load** on `GET /audit`:
+
+| Component    | CPU (peak) | RAM (peak) | Notes                                                 |
+| ------------ | ---------- | ---------- | ----------------------------------------------------- |
+| streamer     | 0.08 vCPU  | ~98 MB     | One worker per archive; lazy line-stream, O(K) merge. |
+| agent        | <0.05 vCPU | ~32 MB     | Pre-compiled regex engine, per-employee state.        |
+| popup_writer | 0.05 vCPU  | ~32 MB     | Batched `executemany`; buffer bounded by batch.       |
+| server       | 0.13 vCPU  | ~52 MB     | FastAPI + Redis read-through cache.                   |
+| nats         | 0.01 vCPU  | ~25 MB     | Core NATS messaging queue.                            |
+| redis        | 0.02 vCPU  | ~10 MB     | Hot `/audit` responses (60s TTL).                     |
+| timescaledb  | 0.01 vCPU  | ~131 MB    | Hypertable on `ts`.                                   |
+
+### Target Envelope (Initial Design Caps)
+
+Original single-host estimates and resource allocation caps prior to benchmarking:
+
+| Component    | CPU (target) | RAM (target) | Notes                                                 |
+| ------------ | ------------ | ------------ | ----------------------------------------------------- |
 | streamer     | 0.2 vCPU     | ~128 MB      | One worker per archive; lazy line-stream, O(K) merge. |
-| agent        | 0.3 vCPU     | ~128 MB      | Pre-compiled regex engine, per-employee state.    |
-| popup_writer | 0.2 vCPU     | ~128 MB      | Batched `executemany`; buffer bounded by batch.   |
-| server       | 0.3 vCPU     | ~192 MB      | FastAPI + Redis read-through cache.               |
-| nats         | 0.1 vCPU     | ~64 MB       |                                                   |
-| redis        | 0.1 vCPU     | ~64 MB       | Hot `/audit` responses.                           |
-| timescaledb  | 0.5 vCPU     | ~512 MB      | Hypertable on `ts`.                               |
+| agent        | 0.3 vCPU     | ~128 MB      | Pre-compiled regex engine, per-employee state.        |
+| popup_writer | 0.2 vCPU     | ~128 MB      | Batched `executemany`; buffer bounded by batch.       |
+| server       | 0.3 vCPU     | ~192 MB      | FastAPI + Redis read-through cache.                   |
+| nats         | 0.1 vCPU     | ~64 MB       | Core NATS messaging queue.                            |
+| redis        | 0.1 vCPU     | ~64 MB       | Hot `/audit` responses.                               |
+| timescaledb  | 0.5 vCPU     | ~512 MB      | Hypertable on `ts`.                                   |
 
 
 **Redis read-through — ~60× DB load reduction.** `/audit` responses are cached with a 60-second
@@ -104,11 +131,21 @@ repeated/keyed reads therefore collapses to **~1.6 RPS** at the database (`100 /
 `employee`) scans deliberately bypass the cache to avoid caching heavy full-table reads.
 
 
-## Services
+### Streamer Execution Logs
 
-| Service        | Role                                                                    |
-| -------------- | ----------------------------------------------------------------------- |
-| `streamer`     | Lazily replays `.tar.gz` recordings (K-way merge by `ts`), emits per-employee `events.raw.{id}` batches. |
-| `agent`        | Evaluates `rules.json` per employee, emits popups to `popups.detected`. |
-| `popup_writer` | Batches popups into TimescaleDB (idempotent, source of truth).          |
-| `server`       | Serves `GET /audit?employee=<id>&rule=<id>` on port 8080.               |
+Below is the verified container output demonstrating parallel worker execution, byte-filtering (~14k raw lines reduced to 2,758 actionable events), and clean termination. 
+
+> **Note:** A full visual snippet of this container execution output is available at [`docs/img/streamer-benchmark-log.png`](docs/img/streamer-benchmark-log.png).
+
+```text
+2026-10-02 12:20:30,608 streamer INFO streamer starting
+2026-10-02 12:20:30,608 streamer.services.archive INFO discovered 3 archive(s) in /data
+2026-10-02 12:20:30,619 streamer.services.archive INFO opened archive for emp-1 (emp-1.tar.gz)
+2026-10-02 12:20:30,628 streamer.services.archive INFO opened archive for emp-2 (emp-2.tar.gz)
+2026-10-02 12:20:30,635 streamer.services.archive INFO opened archive for emp-3 (emp-3.tar.gz)
+2026-10-02 12:20:30,649 streamer.core.bus INFO connected to NATS at nats://nats:4222
+2026-10-02 12:22:13,271 streamer.services.replay INFO replay complete for emp-3: published 879 RawEvent(s)
+2026-10-02 12:22:15,292 streamer.services.replay INFO replay complete for emp-2: published 745 RawEvent(s)
+2026-10-02 12:22:15,303 streamer.services.replay INFO replay complete for emp-1: published 1134 RawEvent(s)
+2026-10-02 12:22:15,304 streamer INFO streamer finished: 2758 RawEvent(s) published under events.raw.*
+2026-10-02 12:22:15,304 streamer INFO streamer stopped
