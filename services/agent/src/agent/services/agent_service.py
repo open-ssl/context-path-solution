@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
 
-from pydantic import BaseModel
 from shared.models.popup import Popup
-from shared.rule_engine import MatchContext, RuleEngine
+from shared.rule_engine import RawEvent, RuleEngine
 
 
 logger = logging.getLogger("agent.services.agent")
@@ -14,13 +12,7 @@ logger = logging.getLogger("agent.services.agent")
 PublishFn = Callable[[Popup], Awaitable[None]]
 EngineFactory = Callable[[], RuleEngine]
 
-
-class RawEvent(BaseModel):
-    """Inbound `events.raw` message: a rule-engine context tagged with its origin."""
-
-    employee: str
-    ts: datetime
-    context: MatchContext
+__all__ = ["AgentProcessor", "RawEvent"]
 
 
 class AgentProcessor:

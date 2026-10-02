@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from datetime import datetime
 
 from pydantic import BaseModel
 
@@ -20,6 +21,17 @@ class MatchContext(BaseModel):
     ocr: str | None = None
 
 
+class RawEvent(BaseModel):
+    """The `events.raw` wire contract: a rule-engine context tagged with its origin.
+
+    Produced by `streamer` from recorded archives and consumed by `agent`.
+    """
+
+    employee: str
+    ts: datetime
+    context: MatchContext
+
+
 class RuleMatch(BaseModel):
     rule: str
     title: str
@@ -33,8 +45,12 @@ def _render(template: str, values: dict[str, str]) -> str:
 class _CompiledRule:
     def __init__(self, rule: Rule) -> None:
         self.rule = rule
+        # OCR text is matched infix (phrase anywhere, whitespace-normalized); the other
+        # fields keep exact whole-string matching.
         self.matchers: dict[str, Matcher] = {
-            field: Matcher(condition) for field, condition in rule.when.model_dump().items() if condition is not None
+            field: Matcher(condition, infix=(field == "ocr"))
+            for field, condition in rule.when.model_dump().items()
+            if condition is not None
         }
 
     def match(self, ctx: MatchContext) -> dict[str, str] | None:
