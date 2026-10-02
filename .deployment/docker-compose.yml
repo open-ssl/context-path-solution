@@ -53,7 +53,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \({POSTGRES_USER:-contextpath} -d\){POSTGRES_DB:-contextpath}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-contextpath} -d $${POSTGRES_DB:-contextpath}"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -101,6 +101,9 @@ services:
       context: .
       dockerfile: services/streamer/Dockerfile
     env_file: .env
+    environment:
+      DATA_DIR: /data
+      TICK_MS: ${TICK_MS:-25}
     volumes:
       - ${DATA_DIR:-./data}:/data:ro
     depends_on:
@@ -116,12 +119,12 @@ services:
       context: .
       dockerfile: services/agent/Dockerfile
     env_file: .env
+    environment:
+      RULES_FILE: /rules.json
     volumes:
       - ${RULES_FILE:-./rules.json}:/rules.json:ro
     depends_on:
       nats:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     networks:
       - contextpath-network

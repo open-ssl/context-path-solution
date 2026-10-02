@@ -1,7 +1,39 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
+from shared.rule_engine import MatchContext, RawEvent, RawEventBatch
 from streamer.core import bus
+
+
+TS = datetime(2026, 3, 10, 16, 0, 0, tzinfo=UTC)
+
+
+def _events(n: int) -> list[RawEvent]:
+    return [RawEvent(employee="emp-1", ts=TS, context=MatchContext(click=f"c{i}")) for i in range(n)]
+
+
+def test_encode_batch_roundtrips() -> None:
+    events = _events(3)
+    decoded = RawEventBatch.validate_json(bus.encode_batch(events))
+    assert [e.context.click for e in decoded] == ["c0", "c1", "c2"]
+
+
+async def test_publish_batch_sends_one_message() -> None:
+    sent: list[tuple[str, bytes]] = []
+
+    class FakeClient:
+        async def publish(self, subject: str, data: bytes) -> None:
+            sent.append((subject, data))
+
+    events = _events(4)
+    await bus.publish_batch(FakeClient(), "events.raw.emp-1", events)
+
+    assert len(sent) == 1  # a whole batch is one NATS message, not four
+    subject, data = sent[0]
+    assert subject == "events.raw.emp-1"
+    assert len(RawEventBatch.validate_json(data)) == 4
 
 
 async def test_connect_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:

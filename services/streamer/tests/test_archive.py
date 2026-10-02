@@ -7,7 +7,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
-from streamer.services.archive import load_archives, read_archive
+from streamer.services.archive import discover_archives, load_archives, open_archive, read_archive
 
 
 METADATA = {
@@ -205,6 +205,104 @@ def test_load_archives_reads_files_from_disk(tmp_path: Path) -> None:
 
 def test_load_archives_empty_dir(tmp_path: Path) -> None:
     assert load_archives(str(tmp_path)) == []
+
+
+def test_move_events_filtered_before_parsing() -> None:
+    # Many mouse-move rows interleaved with two clicks; moves must never become events.
+    mouse = []
+    for i in range(50):
+        mouse.append({"ts": f"2026-03-10T16:00:{i:02d}Z", "event": "move", "mouse_x": i, "mouse_y": i})
+    mouse.append(MOUSE_ROWS[1])  # one real click
+    mouse.append({**MOUSE_ROWS[1], "ts": "2026-03-10T16:00:55Z"})  # second real click
+    # Sort by ts so each per-file stream is chronological (required for the K-way merge).
+    mouse.sort(key=lambda row: row["ts"])
+
+    replay = read_archive(build_archive(mouse=mouse))
+    assert sum(1 for event in replay.events if event.kind == "click") == 2
+    assert all(getattr(event.payload, "event", "click") == "click" for event in replay.events if event.kind == "click")
+
+
+def test_byte_filter_drops_move_even_if_malformed_json() -> None:
+    # A move line whose JSON is broken: the byte pre-filter drops it before json.loads,
+    # so it is not even counted as a malformed line.
+    blob = b"\n".join(
+        [
+            b'{"ts": "2026-03-10T16:00:01Z", "event": "move", "mouse_x": 1',  # truncated JSON, has marker
+            json.dumps(MOUSE_ROWS[1]).encode("utf-8"),
+        ]
+    )
+    replay = read_archive(build_archive(raw_overrides={"mouse.jsonl": blob}))
+    assert sum(1 for event in replay.events if event.kind == "click") == 1
+
+
+def test_kway_merge_yields_globally_sorted_stream() -> None:
+    # Interleaved timestamps across four files; the merge must emit non-decreasing ts.
+    windows = [{"ts": "2026-03-10T16:00:00Z", "event": "focus_change", "window_title": "W", "process_name": "p"}]
+    ocr = [
+        {
+            "ts": "2026-03-10T16:00:02Z",
+            "filename": "a.jpg",
+            "display_id": 0,
+            "ocr_text_blocks": [{"text": "X", "bounding_box": [0, 0, 1, 1]}],
+        },
+        {
+            "ts": "2026-03-10T16:00:06Z",
+            "filename": "b.jpg",
+            "display_id": 0,
+            "ocr_text_blocks": [{"text": "Y", "bounding_box": [0, 0, 1, 1]}],
+        },
+    ]
+    mouse = [
+        {"ts": "2026-03-10T16:00:01Z", "event": "click", "button": "left", "mouse_x": 1, "mouse_y": 1},
+        {"ts": "2026-03-10T16:00:05Z", "event": "click", "button": "left", "mouse_x": 1, "mouse_y": 1},
+    ]
+    clipboard = [
+        {
+            "ts": "2026-03-10T16:00:03Z",
+            "event": "clipboard_change",
+            "clipboard_content_text": "INV-1",
+            "clipboard_source_app": "OUTLOOK.EXE",
+        },
+        {
+            "ts": "2026-03-10T16:00:04Z",
+            "event": "clipboard_change",
+            "clipboard_content_text": "INV-2",
+            "clipboard_source_app": "OUTLOOK.EXE",
+        },
+    ]
+    replay = read_archive(build_archive(windows=windows, ocr=ocr, mouse=mouse, clipboard=clipboard))
+    stamps = [event.ts for event in replay.events]
+    assert stamps == sorted(stamps)
+    assert len(stamps) == 7
+
+
+def test_open_archive_streams_lazily_from_disk(tmp_path: Path) -> None:
+    (tmp_path / "emp-1.tar.gz").write_bytes(build_archive())
+    replay = open_archive(tmp_path / "emp-1.tar.gz")
+    assert replay.employee == "emp-1"
+    # Lazy: events is a one-shot iterator, not a materialized list.
+    assert iter(replay.events) is replay.events
+    kinds = [event.kind for event in replay.events]
+    assert kinds == ["focus", "ocr", "ocr", "click", "clipboard"]
+
+
+def test_archive_with_only_some_event_files() -> None:
+    # An archive that ships only metadata + mouse.jsonl: the absent members are skipped.
+    base = "20260310_160005"
+    files = {
+        f"{base}/metadata.json": json.dumps(METADATA).encode("utf-8"),
+        f"{base}/events/mouse.jsonl": _jsonl(MOUSE_ROWS),
+    }
+    replay = read_archive(build_targz(files))
+    kinds = {event.kind for event in replay.events}
+    assert kinds == {"click"}
+
+
+def test_discover_archives_sorted_and_filtered(tmp_path: Path) -> None:
+    (tmp_path / "emp-2.tar.gz").write_bytes(build_archive(metadata={**METADATA, "employee_id": "emp-2"}))
+    (tmp_path / "emp-1.tar.gz").write_bytes(build_archive())
+    (tmp_path / "notes.txt").write_text("ignore me")
+    assert [p.name for p in discover_archives(str(tmp_path))] == ["emp-1.tar.gz", "emp-2.tar.gz"]
 
 
 def test_randomized_ocr_dedup_chain_resolves() -> None:

@@ -14,8 +14,13 @@ from streamer.services.archive import ArchiveReplay, SourceEvent
 
 logger = logging.getLogger("streamer.services.replay")
 
-PublishFn = Callable[[RawEvent], Awaitable[None]]
+# A batch sink: one coroutine call ships a whole interval's worth of RawEvents.
+PublishBatchFn = Callable[[list[RawEvent]], Awaitable[None]]
+# Given an employee id, returns the batch sink for that employee's isolated topic.
+PublishFactory = Callable[[str], PublishBatchFn]
 SleepFn = Callable[[float], Awaitable[None]]
+
+DEFAULT_BATCH_SIZE = 200
 
 
 @dataclass
@@ -61,40 +66,77 @@ def _advance(state: _EmployeeState, event: SourceEvent) -> MatchContext | None:
     )
 
 
-def _merge(archives: list[ArchiveReplay]) -> tuple[list[SourceEvent], dict[str, _EmployeeState]]:
-    states = {arc.employee: _EmployeeState(displays=arc.displays) for arc in archives}
-    merged = [event for arc in archives for event in arc.events]
-    merged.sort(key=lambda event: event.ts)
-    return merged, states
-
-
-async def replay(
-    archives: list[ArchiveReplay],
-    publish: PublishFn,
+async def replay_archive(
+    archive: ArchiveReplay,
+    publish: PublishBatchFn,
     *,
     tick_ms: int,
+    batch_size: int = DEFAULT_BATCH_SIZE,
     sleep: SleepFn = asyncio.sleep,
 ) -> int:
-    """Replay archives as a single chronological stream.
+    """Replay a single employee's archive to its isolated topic.
 
-    Events are grouped into one-second ticks; between consecutive ticks we pause
-    `tick_ms` to emulate the recording's pacing. Returns the number of RawEvents
-    published. When every archive is exhausted the coroutine returns (graceful stop).
+    The one-second tick is the unit of both pacing and batching:
+
+    - **Delta-time fast-forward.** Between two populated seconds we sleep
+      `delta_seconds * (tick_ms / 1000)` where `delta_seconds` is the gap between them,
+      so an idle stretch (no events for N seconds) collapses to a single proportional
+      pause instead of N per-second ticks, and a zero gap (same second) never pauses.
+    - **Batching.** All actionable events in one tick are shipped as a single NATS
+      message (also flushed when the buffer reaches `batch_size`), collapsing per-event
+      round-trips.
+
+    Returns the number of RawEvents published.
     """
-    merged, states = _merge(archives)
+    state = _EmployeeState(displays=archive.displays)
+    buffer: list[RawEvent] = []
     published = 0
-    current_tick: int | None = None
+    prev_tick: int | None = None
 
-    for event in merged:
+    async def flush() -> None:
+        nonlocal published
+        if buffer:
+            await publish(list(buffer))
+            published += len(buffer)
+            buffer.clear()
+
+    for event in archive.events:
         tick = int(event.ts.timestamp())
-        if current_tick is not None and tick != current_tick:
-            await sleep(tick_ms / 1000)
-        current_tick = tick
+        if prev_tick is not None and tick != prev_tick:
+            # Finished a second: ship its batch, then fast-forward the idle gap.
+            await flush()
+            await sleep((tick - prev_tick) * (tick_ms / 1000.0))
+        prev_tick = tick
 
-        context = _advance(states[event.employee], event)
+        context = _advance(state, event)
         if context is not None:
-            await publish(RawEvent(employee=event.employee, ts=event.ts, context=context))
-            published += 1
+            buffer.append(RawEvent(employee=archive.employee, ts=event.ts, context=context))
+            if len(buffer) >= batch_size:
+                await flush()
 
-    logger.info("replay complete: published %d RawEvent(s)", published)
+    await flush()
+    logger.info("replay complete for %s: published %d RawEvent(s)", archive.employee, published)
     return published
+
+
+async def run_workers(
+    archives: list[ArchiveReplay],
+    publish_factory: PublishFactory,
+    *,
+    tick_ms: int,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    sleep: SleepFn = asyncio.sleep,
+) -> int:
+    """Run one independent worker per archive concurrently, each streaming to its own
+    employee topic. Returns the total number of RawEvents published across all workers."""
+    if not archives:
+        return 0
+    results = await asyncio.gather(
+        *(
+            replay_archive(
+                archive, publish_factory(archive.employee), tick_ms=tick_ms, batch_size=batch_size, sleep=sleep
+            )
+            for archive in archives
+        )
+    )
+    return sum(results)

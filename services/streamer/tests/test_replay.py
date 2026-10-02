@@ -8,7 +8,7 @@ from shared.models.metadata import Display
 from shared.models.rule import RuleSet
 from shared.rule_engine import RawEvent, RuleEngine
 from streamer.services.archive import ArchiveReplay, SourceEvent
-from streamer.services.replay import replay
+from streamer.services.replay import replay_archive, run_workers
 
 
 DISPLAY = Display(id=0, bounds=(0, 0, 1920, 1080), scale=1.0, primary=True)
@@ -61,19 +61,18 @@ def _ocr_multi(emp: str, ts: datetime, *, blocks: list[tuple[str, tuple[int, int
     return SourceEvent(ts=ts, employee=emp, kind="ocr", payload=payload)
 
 
-async def _first_context(events: list[SourceEvent]) -> RawEvent | None:
-    archive = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=events)
-    collector = Collector()
-    await replay([archive], collector, tick_ms=0, sleep=FakeSleep())
-    return collector.published[0] if collector.published else None
-
-
 class Collector:
-    def __init__(self) -> None:
-        self.published: list[RawEvent] = []
+    """Collects published batches; `published` is the flattened event stream."""
 
-    async def __call__(self, event: RawEvent) -> None:
-        self.published.append(event)
+    def __init__(self) -> None:
+        self.batches: list[list[RawEvent]] = []
+
+    async def __call__(self, events: list[RawEvent]) -> None:
+        self.batches.append(events)
+
+    @property
+    def published(self) -> list[RawEvent]:
+        return [event for batch in self.batches for event in batch]
 
 
 class FakeSleep:
@@ -82,6 +81,13 @@ class FakeSleep:
 
     async def __call__(self, seconds: float) -> None:
         self.calls.append(seconds)
+
+
+async def _first_context(events: list[SourceEvent]) -> RawEvent | None:
+    archive = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=events)
+    collector = Collector()
+    await replay_archive(archive, collector, tick_ms=0, sleep=FakeSleep())
+    return collector.published[0] if collector.published else None
 
 
 async def test_click_context_inherits_running_state_and_resolves_ocr() -> None:
@@ -93,7 +99,7 @@ async def test_click_context_inherits_running_state_and_resolves_ocr() -> None:
     archive = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=events)
     collector = Collector()
 
-    published = await replay([archive], collector, tick_ms=25, sleep=FakeSleep())
+    published = await replay_archive(archive, collector, tick_ms=25, sleep=FakeSleep())
 
     assert published == 1
     ctx = collector.published[0].context
@@ -108,7 +114,7 @@ async def test_clipboard_event_builds_context() -> None:
     archive = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=events)
     collector = Collector()
 
-    published = await replay([archive], collector, tick_ms=0, sleep=FakeSleep())
+    published = await replay_archive(archive, collector, tick_ms=0, sleep=FakeSleep())
 
     assert published == 1
     ctx = collector.published[0].context
@@ -116,40 +122,87 @@ async def test_clipboard_event_builds_context() -> None:
     assert ctx.process == "OUTLOOK.EXE"
 
 
-async def test_ticks_paced_once_per_second_boundary() -> None:
+async def test_delta_time_pacing_skips_idle_gaps() -> None:
     events = [
         _click("emp-1", _at(0.0), x=1, y=1),
-        _click("emp-1", _at(0.4), x=1, y=1),  # same second -> no pause
+        _click("emp-1", _at(0.2), x=1, y=1),  # same second -> no pause
         _click("emp-1", _at(1.0), x=1, y=1),  # next second -> one pause
-        _click("emp-1", _at(2.0), x=1, y=1),  # next second -> one pause
+        _click("emp-1", _at(5.0), x=1, y=1),  # +4 idle seconds -> one fast-forward pause
     ]
     archive = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=events)
     collector = Collector()
     sleep = FakeSleep()
 
-    published = await replay([archive], collector, tick_ms=25, sleep=sleep)
+    # tick_ms=1000 -> factor 1.0, so each sleep equals the gap in whole seconds.
+    published = await replay_archive(archive, collector, tick_ms=1000, sleep=sleep)
 
     assert published == 4
-    # Three distinct seconds (0, 1, 2) -> two tick boundaries -> two pauses of 25ms.
-    assert sleep.calls == [0.025, 0.025]
+    # Same-second events never pause; the 4-second idle gap is one sleep, not four ticks.
+    assert sleep.calls == [1.0, 4.0]
+    # Batched per second: {sec 0: 2 events}, {sec 1: 1}, {sec 5: 1}.
+    assert [len(batch) for batch in collector.batches] == [2, 1, 1]
 
 
-async def test_merges_employees_chronologically() -> None:
+async def test_events_in_same_interval_ship_as_one_batch() -> None:
+    events = [
+        _click("emp-1", _at(0.0), x=1, y=1),
+        _click("emp-1", _at(0.0), x=2, y=2),
+        _click("emp-1", _at(0.0), x=3, y=3),
+        _click("emp-1", _at(1.0), x=4, y=4),
+        _click("emp-1", _at(1.0), x=5, y=5),
+    ]
+    archive = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=events)
+    collector = Collector()
+    sleep = FakeSleep()
+
+    published = await replay_archive(archive, collector, tick_ms=25, sleep=sleep)
+
+    assert published == 5
+    # One batch per interval: the three @0.0 events flush before the single 1.0s pause.
+    assert [len(batch) for batch in collector.batches] == [3, 2]
+    assert sleep.calls == [0.025]
+
+
+async def test_batch_size_cap_splits_a_burst() -> None:
+    events = [_click("emp-1", _at(0.0), x=i, y=i) for i in range(5)]  # all same instant
+    archive = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=events)
+    collector = Collector()
+    sleep = FakeSleep()
+
+    published = await replay_archive(archive, collector, tick_ms=25, batch_size=2, sleep=sleep)
+
+    assert published == 5
+    assert [len(batch) for batch in collector.batches] == [2, 2, 1]
+    assert sleep.calls == []  # no delta between same-instant events
+
+
+async def test_empty_archive_publishes_nothing() -> None:
+    archive = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=[])
+    collector = Collector()
+    published = await replay_archive(archive, collector, tick_ms=25, sleep=FakeSleep())
+    assert published == 0
+    assert collector.batches == []
+
+
+async def test_run_workers_streams_each_employee_to_its_own_sink() -> None:
     archive_a = ArchiveReplay(employee="emp-1", displays=[DISPLAY], events=[_click("emp-1", _at(0.0), x=1, y=1)])
     archive_b = ArchiveReplay(employee="emp-2", displays=[DISPLAY], events=[_click("emp-2", _at(0.5), x=1, y=1)])
-    collector = Collector()
+    sinks: dict[str, Collector] = {}
 
-    published = await replay([archive_a, archive_b], collector, tick_ms=0, sleep=FakeSleep())
+    def factory(employee: str) -> Collector:
+        collector = sinks.setdefault(employee, Collector())
+        return collector
 
-    assert published == 2
-    assert [event.employee for event in collector.published] == ["emp-1", "emp-2"]
+    total = await run_workers([archive_a, archive_b], factory, tick_ms=0, sleep=FakeSleep())
+
+    assert total == 2
+    assert set(sinks) == {"emp-1", "emp-2"}
+    assert [e.employee for e in sinks["emp-1"].published] == ["emp-1"]
+    assert [e.employee for e in sinks["emp-2"].published] == ["emp-2"]
 
 
-async def test_empty_archives_publish_nothing() -> None:
-    collector = Collector()
-    published = await replay([], collector, tick_ms=25, sleep=FakeSleep())
-    assert published == 0
-    assert collector.published == []
+async def test_run_workers_empty_is_noop() -> None:
+    assert await run_workers([], lambda employee: Collector(), tick_ms=25, sleep=FakeSleep()) == 0
 
 
 async def test_randomized_click_coordinates_hit_and_miss_bounding_box() -> None:

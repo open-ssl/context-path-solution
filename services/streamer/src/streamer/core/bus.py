@@ -5,9 +5,20 @@ import logging
 
 import nats
 from nats.aio.client import Client as NatsClient
+from shared.rule_engine import RawEvent, RawEventBatch
 
 
 logger = logging.getLogger("streamer.core.bus")
+
+
+def encode_batch(events: list[RawEvent]) -> bytes:
+    """Serialize an interval's RawEvents into a single NATS payload (a JSON array)."""
+    return RawEventBatch.dump_json(events)
+
+
+async def publish_batch(client: NatsClient, subject: str, events: list[RawEvent]) -> None:
+    """Publish a whole batch as one message, avoiding a round-trip per event."""
+    await client.publish(subject, encode_batch(events))
 
 
 async def connect(url: str, *, retries: int = 10, delay: float = 1.0) -> NatsClient:

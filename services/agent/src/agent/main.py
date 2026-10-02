@@ -8,17 +8,19 @@ import signal
 from nats.aio.msg import Msg
 from shared.config import settings
 from shared.models.popup import Popup
-from shared.rule_engine import RuleEngine
+from shared.rule_engine import RawEventBatch, RuleEngine
 
 from agent.core import bus
 from agent.core.rules import load_ruleset
-from agent.services.agent_service import AgentProcessor, RawEvent
+from agent.services.agent_service import AgentManager
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("agent")
 
-SUBJECT_IN = "events.raw"
+# Wildcard over the per-employee subjects the streamer publishes to
+# (`events.raw.{employee_id}`): one subscription, state isolated per employee.
+SUBJECT_IN = "events.raw.>"
 SUBJECT_OUT = "popups.detected"
 
 
@@ -30,18 +32,18 @@ async def run() -> None:
     async def publish(popup: Popup) -> None:
         await client.publish(SUBJECT_OUT, popup.model_dump_json().encode())
 
-    processor = AgentProcessor(lambda: RuleEngine(ruleset.rules), publish)
+    manager = AgentManager(lambda: RuleEngine(ruleset.rules), publish)
 
     async def handler(msg: Msg) -> None:
         try:
-            event = RawEvent.model_validate_json(msg.data)
+            events = RawEventBatch.validate_json(msg.data)
         except Exception:
-            logger.exception("dropping malformed event message")
+            logger.exception("dropping malformed event batch on %s", msg.subject)
             return
-        await processor.process(event)
+        await manager.process_batch(events)
 
-    # No queue group: edge-triggered state is per-employee, so a single consumer
-    # keeps each employee's event order and firing state consistent.
+    # No queue group: edge-triggered state is per-employee, so a single consumer keeps
+    # each employee's event order and firing state consistent.
     await client.subscribe(SUBJECT_IN, cb=handler)
     logger.info("subscribed to %s, publishing matches to %s", SUBJECT_IN, SUBJECT_OUT)
 

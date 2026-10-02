@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterable
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from shared.models.rule import Rule
 from shared.rule_engine.matching import Matcher
@@ -36,6 +36,13 @@ class RuleMatch(BaseModel):
     rule: str
     title: str
     body: str
+
+
+# Wire codec for batched `events.raw.*` publishes: the streamer accumulates events
+# per interval and ships them as one NATS message (a JSON array) to avoid per-event
+# round-trips; the agent decodes the same array. Defined once here so producer and
+# consumer share a single contract.
+RawEventBatch = TypeAdapter(list[RawEvent])
 
 
 def _render(template: str, values: dict[str, str]) -> str:

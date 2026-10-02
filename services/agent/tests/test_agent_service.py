@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from agent.services.agent_service import AgentProcessor, RawEvent
+from agent.services.agent_service import AgentManager, AgentProcessor, RawEvent
 from shared.models.popup import Popup
 from shared.models.rule import RuleSet
 from shared.rule_engine import MatchContext, RuleEngine
@@ -221,6 +221,21 @@ async def test_partial_match_fails_when_all_conditions_required() -> None:
 
     assert popups == []
     assert collector.published == []
+
+
+async def test_process_batch_routes_per_employee_in_order() -> None:
+    """A single `events.raw.*` batch is processed per-event, with isolated state."""
+    collector = Collector()
+    manager = AgentManager(lambda: RuleEngine(RuleSet.model_validate(RULES).rules), collector)
+
+    batch = [
+        event("emp-1", click="FW: a", process="olk.exe"),
+        event("emp-1", click="FW: a", process="olk.exe"),  # same employee -> edge-suppressed
+        event("emp-2", click="FW: a", process="olk.exe"),  # isolated engine -> fires
+    ]
+    popups = await manager.process_batch(batch)
+
+    assert [p.employee for p in popups] == ["emp-1", "emp-2"]
 
 
 async def test_multiple_rules_triggered_in_single_event() -> None:
