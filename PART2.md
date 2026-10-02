@@ -19,6 +19,7 @@ To release the system, I divide development among four product teams and specify
 * **Resource Management & Auto-Throttling:** Dynamic control of system load. When running on battery or during peak CPU usage, the agent automatically reduces OCR frequency and frame capture rates, remaining invisible to the user.
 * **Offline Buffering & Fault Tolerance:** Local event queue (SQLite/LevelDB) on the desktop to preserve ticks during network outages, with transparent delivery to NATS once connectivity is restored.
 * **Safe Release Cycle (Canary Rings):** Auto-updates via release rings (Ring 0 — internal environment, Ring 1 — Canary 1–5% with Sentry tracking, Ring 2 — full release) to protect clients from deployment failures.
+* **Proven Go/Rust Core Engine:** Reuses the zero-drift Go streaming architecture proven in this MVP as the core event-loop and ingestion engine for the cross-platform desktop agent binary.
 
 ---
 

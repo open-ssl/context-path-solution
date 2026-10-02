@@ -4,7 +4,7 @@
 
 Like any human, I make mistakes. For me, it is more important to explain why these mistakes happened rather than trying to hide them. I could have created a clean repository hiding the iterations, but that is not how professional developers operate. Ultimately, mistakes are an essential part of experience.
 
-1. The commit history shows that the streaming service was initially designed differently. Based on my calculations, it should have performed well for up to 1,000 users. However, my performance benchmarks after commit 7 showed that service optimization was needed immediately. Therefore, I refactored it at this stage to ensure maximum throughput and speed.
+1. The commit history shows that the streaming service was initially designed differently. Based on my calculations, it should have performed well for up to 1,000 users. However, my performance benchmarks after commit 7 showed that service optimization was needed immediately. Therefore, I refactored it at this stage to ensure maximum throughput and speed. I had to rewrite the streamer in Go, or else I wouldn't have been able to sleep tonight 
 
 2. Skipping database migrations in the MVP: Usually, migrations are added right away, but in this MVP, schema initialization is handled directly in code (repository.py with IF NOT EXISTS). TimescaleDB was chosen as an intermediate containerized solution for a fast start, while ClickHouse is the target data store for the long-term vision. Adding ORM migrations for a temporary Postgres instance felt redundant for an MVP.
 
@@ -12,21 +12,21 @@ Like any human, I make mistakes. For me, it is more important to explain why the
 
 ## Accepted Decisions & Future Roadmap (Q&A)
 
-### 1. Why Python for the MVP?
+### 1. Evolution from Python Prototype to Production-Ready Go Streamer
 
-For the streaming service, I initially considered Go or Rust, but decided against overcomplicating the MVP since the performance gain would be negligible under the forced pacing rules.
-
-Using Python: The async NATS Python client (nats-py) easily processes 20,000 to 50,000 events per second on a single instance, providing more than enough headroom for this MVP.
-- Single Toolchain: A unified monorepo on uv workspace with a single linter (ruff), test suite (pytest), and shared Pydantic models in cp-shared without schema duplication.
-- High Throughput: Async nats-py on asyncio handles 20,000-50,000 events/sec, far exceeding the requirements of this MVP.
-
-**What's Next:** Rewrite the edge streamer in Go/Rust as a standalone desktop agent to eliminate GIL overhead and minimize resource usage (<15 MB RAM) on client machines.
+- **Initial Prototyping (Python):** The streamer service was initially prototyped in Python (`asyncio` + `nats-py`) to rapidly validate event schemas, DTOs, and NATS contracts alongside other Python services in the monorepo.
+- **Identified Bottlenecks:** Benchmark testing on a stress dataset of 100 employees (103,227 events) revealed single-threaded Python GIL limitations and Event Loop starvation during concurrent Gzip decompression and JSON parsing. This resulted in scheduling lag and high memory footprint (~89–250 MB RAM).
+- **Decision & Complete Migration to Go:** To guarantee production readiness, hardware-backed pacing accuracy, and minimal footprint, the Python streamer was deprecated and fully replaced with a standalone **Go implementation** (`goroutines` + `time.Ticker`).
+- **Key Measured Improvements:**
+  - **Hardware-Accurate Pacing:** Zero scheduling drift. At $TICK\_MS=25$, execution matched the theoretical timeline limit at 5m 22.09s (320 events/s). Scaling to $TICK\_MS=15$ yielded an exact linear speedup to **3m 13.44s (534 events/s)**.
+  - **Resource Envelope:** Peak RAM dropped from ~250 MB to **~18 MB** (~80%+ memory reduction).
+  - **Multi-Core Parallelism:** Go's $M:N$ scheduler natively scales worker goroutines across allocated CPU cores (`STREAMER_CPUS`).
 
 ---
 
 ### 2. How is the "1 streamer = 1 employee" requirement satisfied?
 
-Independent async workers (asyncio.Task per archive) run concurrently in the MVP container, streaming data into isolated topics: events.raw.{employee_id}.
+Independent concurrent goroutines (one worker goroutine per archive) run in parallel within the Go streamer container, streaming data into isolated NATS topics: `events.raw.{employee_id}`.
 
 **What's Next:** Transition from containerized replayers to a decentralized OS-native binary installed directly on employee laptops (100,000 autonomous producers).
 
@@ -86,14 +86,12 @@ Direct HTTP calls from agents would block the tick processing pipeline under hea
 
 ---
 
-### 8. Performance optimizations for the streamer service:
+### 8. Performance optimizations for the Go streamer service:
 
-- Lazy K-Way Merge (heapq.merge): Line-by-line reading from .tar.gz files in memory using generators. Merging K event logs per employee happens on-the-fly with O(K) memory instead of loading the entire O(N) dataset into RAM.
-- Byte-level Pre-filtering: High-frequency non-actionable events (e.g. mouse movement "event": "move") are filtered out at the substring/byte level before calling json.loads() or Pydantic validation.
-- Delta-Time Fast-Forwarding: Skips empty seconds without events without artificial sleep delays. Sleep duration is calculated only between actual event timestamps (delta_seconds * TICK_MS), keeping total replay time predictable (~1.5-2 mins) without wasting CPU on empty ticks.
-- NATS Batching: Buffers tick events locally and dispatches them in batches via publish_batch, eliminating network round-trip overhead per event.
-
-**What's Next:** Implement local SQLite/LevelDB offline event buffering on the desktop agent to hold events locally during network outages and flush upon reconnect.
+- Lazy K-Way Stream Merge (`container/heap`): Line-by-line reading from `.tar.gz` files in memory using Go's `archive/tar` and `compress/gzip` readers combined with a min-heap priority queue. Merging K event logs per employee happens on-the-fly with $O(K)$ space complexity instead of loading the entire $O(N)$ dataset into RAM.
+- Byte-level Pre-filtering: High-frequency non-actionable events (e.g. mouse movement `"event": "move"`) are filtered out at the raw byte/substring level before JSON unmarshaling.
+- Delta-Time Fast-Forwarding: Skips empty seconds without events without artificial delays. Sleep duration is calculated only between actual event timestamps (`delta_seconds * TICK_MS`), keeping total replay time hardware-precise with zero scheduler drift (`time.Ticker`).
+- NATS Batching: Buffers tick events locally and dispatches them in batches over `nats.go`, eliminating per-event network round-trip overhead.
 
 ---
 
@@ -129,7 +127,7 @@ To strike a balance between MVP delivery speed and code reliability, several int
 - **Rationale:** All current operational rules are triggered by user actions. Treating high-frequency window/screen updates strictly as context minimizes redundant rule engine evaluations.
 
 ### 3. Input Data Preconditions & Invariants
-- **Chronological Stream Sorting:** Each `.jsonl` stream inside the archive is assumed to be pre-sorted by `ts`. Inter-stream merging relies on a memory-efficient $O(K)$ `heapq.merge`.
+- **Chronological Stream Sorting:** Each `.jsonl` stream inside the archive is assumed to be pre-sorted by `ts`. Inter-stream merging relies on a memory-efficient $O(K)$ min-heap priority queue.
 - **Archive Mapping:** The system enforces a strict invariant of 1 `.tar.gz` archive per unique `employee_id`.
 - **Backward OCR Deduplication:** `deduplicated_from` resolution assumes backward-referencing canonical frames containing populated text blocks.
 

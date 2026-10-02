@@ -12,7 +12,6 @@ members = [
     "cp-popup-writer",
     "cp-server",
     "cp-shared",
-    "cp-streamer",
 ]
 
 [manifest.dependency-groups]
@@ -359,21 +358,6 @@ dependencies = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
-]
-
-[[package]]
-name = "cp-streamer"
-version = "0.1.0"
-source = { editable = "services/streamer" }
-dependencies = [
-    { name = "cp-shared" },
-    { name = "nats-py" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cp-shared", editable = "shared" },
-    { name = "nats-py", specifier = ">=2.9" },
 ]
 
 [[package]]

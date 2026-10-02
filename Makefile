@@ -6,7 +6,7 @@ define load_env
 endef
 
 .PHONY: open_project run run-fg deploy build down logs test test-cov test-html-cov \
-        lint format benchmark gen-data gen-run check-docker
+        lint format benchmark gen-data gen-run check-docker go-test
 
 PROJECT_PATH ?= .
 COMPOSE := docker compose -f docker-compose.yml --project-directory .
@@ -19,6 +19,7 @@ COMPOSE := docker compose -f docker-compose.yml --project-directory .
 # ---------------------------------------------------------------------------
 HAS_UV := $(shell command -v uv >/dev/null 2>&1 && [ -f pyproject.toml ] && echo 1)
 PY := $(shell command -v python3 2>/dev/null || command -v python 2>/dev/null)
+HAS_GO := $(shell command -v go >/dev/null 2>&1 && echo 1)
 
 INSTALL_UV := Install uv: https://docs.astral.sh/uv/getting-started/installation/
 INSTALL_DOCKER := Install Docker: https://docs.docker.com/get-docker/
@@ -68,6 +69,16 @@ test:
 	else \
 		echo "ERROR: need uv or a python with pytest. $(INSTALL_UV) (or: pip install pytest pytest-asyncio)"; exit 1; \
 	fi
+	@if [ -n "$(HAS_GO)" ]; then \
+		echo "Running Go streamer tests..."; \
+		$(MAKE) go-test; \
+	else \
+		echo "skipping Go streamer tests (go not installed)"; \
+	fi
+
+# Go streamer unit tests (isolated: no NATS/DB required).
+go-test:
+	cd services/streamer && go test -v ./...
 
 test-cov:
 	@if [ -n "$(HAS_UV)" ]; then \
@@ -134,4 +145,3 @@ gen-data:
 
 # Generate fresh synthetic data, then bring the whole stack up.
 gen-run: gen-data run
-

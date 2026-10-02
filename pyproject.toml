@@ -1,5 +1,6 @@
 [tool.uv.workspace]
 members = ["shared", "services/*"]
+exclude = ["services/streamer"]
 
 [tool.uv.sources]
 cp-shared = { workspace = true }
@@ -73,14 +74,12 @@ pythonpath = [
   "shared/src",
   "services/server/src",
   "services/popup_writer/src",
-  "services/streamer/src",
   "services/agent/src"
 ]
 testpaths = [
   "shared/tests",
   "services/server/tests",
   "services/popup_writer/tests",
-  "services/streamer/tests",
   "services/agent/tests"
 ]
 
@@ -89,7 +88,6 @@ source = [
   "shared/src/shared",
   "services/server/src/server",
   "services/popup_writer/src/popup_writer",
-  "services/streamer/src/streamer",
   "services/agent/src/agent"
 ]
 omit = [

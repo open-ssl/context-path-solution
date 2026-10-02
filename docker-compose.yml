@@ -112,6 +112,10 @@ services:
     networks:
       - contextpath-network
     restart: "no"
+    deploy:
+      resources:
+        limits:
+          cpus: '${STREAMER_CPUS:-2}'
 
   agent:
     container_name: contextpath-agent

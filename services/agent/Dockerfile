@@ -18,7 +18,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=shared/pyproject.toml,target=shared/pyproject.toml \
     --mount=type=bind,source=services/server/pyproject.toml,target=services/server/pyproject.toml \
     --mount=type=bind,source=services/popup_writer/pyproject.toml,target=services/popup_writer/pyproject.toml \
-    --mount=type=bind,source=services/streamer/pyproject.toml,target=services/streamer/pyproject.toml \
     --mount=type=bind,source=services/agent/pyproject.toml,target=services/agent/pyproject.toml \
     uv sync --frozen --no-dev --no-install-workspace --package cp-agent
 
