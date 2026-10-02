@@ -120,3 +120,7 @@ sequence = [
 [tool.poe.tasks.benchmark]
 help = "Measure peak CPU/RAM of the running stack under streaming + /audit load"
 shell = "uv run python dev/scripts/benchmark.py"
+
+[tool.poe.tasks.generate-data]
+help = "Generate synthetic event archives into ./data (CLI args pass through, e.g. --employees 10)"
+cmd = "python dev/scripts/generate_data.py"

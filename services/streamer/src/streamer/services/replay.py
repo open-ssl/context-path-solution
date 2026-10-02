@@ -21,6 +21,7 @@ PublishFactory = Callable[[str], PublishBatchFn]
 SleepFn = Callable[[float], Awaitable[None]]
 
 DEFAULT_BATCH_SIZE = 200
+DEFAULT_LOG_BATCH_SIZE = 100
 
 
 @dataclass
@@ -88,17 +89,27 @@ async def replay_archive(
 
     Returns the number of RawEvents published.
     """
+    employee_id = archive.employee
+    logger.info("[%s] worker started replay", employee_id)
+
     state = _EmployeeState(displays=archive.displays)
     buffer: list[RawEvent] = []
     published = 0
+    logged_milestone = 0  # last 100-event boundary already logged
     prev_tick: int | None = None
 
     async def flush() -> None:
-        nonlocal published
+        nonlocal published, logged_milestone
         if buffer:
             await publish(list(buffer))
             published += len(buffer)
             buffer.clear()
+            # Progress only at each DEFAULT_LOG_BATCH_SIZE-event boundary — cheap, off the per-event path.
+            # The archive is streamed lazily (unknown total up front), so we log the
+            # running count rather than a ratio.
+            if published // DEFAULT_LOG_BATCH_SIZE > logged_milestone:
+                logged_milestone = published // DEFAULT_LOG_BATCH_SIZE
+                logger.info("[%s] progress: published %d events", employee_id, published)
 
     for event in archive.events:
         tick = int(event.ts.timestamp())
