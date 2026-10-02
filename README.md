@@ -5,26 +5,70 @@ every matching popup is persisted and served over an audit API. The system is a 
 built as a `uv` workspace monorepo: a shared library (`cp-shared`) plus four services wired
 together by NATS, Redis, and TimescaleDB.
 
-## Quick start
+## Quick Start
+
+### Prerequisites
 
 ```bash
-cp .env.example .env         # adjust DATA_DIR / RULES_FILE for your dataset
-make run                     # docker compose up --build -d  (infra + 4 services)
+cp .env.example .env
 ```
 
-Query the audit API (`server` listens on `localhost:8080`):
+> **Rules:** `rules.json` mounts dynamically — modify rules on the fly without rebuilds. Default matches the task spec.
+
+---
+
+### Option 1 — Docker Compose Directly (Default)
+
+```bash
+docker compose up --build
+```
+
+Uses ready-made archives in `./data/` (`emp-1.tar.gz` – `emp-3.tar.gz`). Zero setup needed.
+
+### Option 2 — Makefile (`make run`)
+
+```bash
+make run
+```
+
+Auto-detects environment (`uv` / `poe` or system `python3`). Runs `docker compose up --build -d` with readiness checks.
+
+### Option 3 — Fresh Data + Run (`make gen-run`)
+
+```bash
+make gen-run
+```
+
+Generates a synthetic dataset (10 employees × 3,000 events) into `./data/` via `dev/scripts/generate_data.py` (triggers all 5 rules), then launches the stack.
+
+---
+
+Query the audit API — `server` on `localhost:8080`, Swagger at `/api` (both params optional):
 
 ```bash
 curl 'http://localhost:8080/audit?employee=emp-1&rule=forwarded-email-opened'
 ```
 
-Both query params are optional; each popup is returned as `{employee, rule, ts, title, body}`.
-Swagger UI is at `http://localhost:8080/api`.
+### MVP Performance (10 employees, 100 RPS on `/audit`)
 
-```bash
-make down      # stop the stack        make test   # uv run pytest --cov
-make logs      # follow service logs    make lint   # ruff check + format
-```
+**Resources:**
+
+| Component      | CPU (peak) | RAM (peak) |
+| -------------- | ---------- | ---------- |
+| `streamer`     | ~0.13 vCPU | ~31 MB     |
+| `agent`        | ~0.05 vCPU | ~29 MB     |
+| `popup_writer` | ~0.05 vCPU | ~32 MB     |
+| `server`       | ~0.38 vCPU | ~48 MB     |
+| `timescaledb`  | —          | ~133 MB    |
+
+**Speed:** 10 archives (3049 events) replay in **~1m 38s – 1m 45s** — "one hour in 1–2 minutes".
+
+Full 3-vs-100-employee breakdown under [Load & resource envelope](#load--resource-envelope).
+
+### Further Reading
+
+- **[DECISIONS.md](DECISIONS.md)** — architecture decisions & trade-offs.
+- **[PART2.md](PART2.md)** — scaling to the commercial version.
 
 ## Services
 
