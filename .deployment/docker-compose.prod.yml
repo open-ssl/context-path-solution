@@ -1,0 +1,193 @@
+# Target Part-2 production architecture — NOT executed by the MVP.
+# This manifest illustrates the commercial topology (ClickHouse + NATS JetStream +
+# S3/MinIO work queue + horizontally scaled workers). It is intentionally decoupled
+# from the current code, which is wired for TimescaleDB; see PART2.md and DECISIONS.md.
+#
+# Run with: docker compose -f .deployment/docker-compose.prod.yml up -d
+
+name: context-path-prod
+
+networks:
+  contextpath-network:
+    driver: bridge
+
+volumes:
+  clickhouse-data:
+  redis-data:
+  minio-data:
+  nats-data:
+
+services:
+  nats:
+    container_name: contextpath-nats
+    image: nats:2-alpine
+    # JetStream enabled for durable, partitioned-by-employee_id streams.
+    command: ["-js", "-sd", "/data"]
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "4222"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  redis:
+    container_name: contextpath-redis
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  # Target analytical store: columnar OLAP for billions of events (replaces TimescaleDB).
+  clickhouse:
+    container_name: contextpath-clickhouse
+    image: clickhouse/clickhouse-server:latest
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-contextpath}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-contextpath}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-contextpath}
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  # S3-compatible object store: batch upload of .tar.gz recordings, consumed via a NATS work queue.
+  minio:
+    container_name: contextpath-minio
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-contextpath}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-contextpath}
+    ports:
+      - "${MINIO_API_PORT:-9100}:9000"
+      - "${MINIO_CONSOLE_PORT:-9101}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  server:
+    container_name: contextpath-server
+    build:
+      context: ..
+      dockerfile: services/server/Dockerfile
+    environment:
+      NATS_HOST: nats
+      REDIS_HOST: redis
+      # Read path targets ClickHouse in production.
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-contextpath}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-contextpath}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-contextpath}
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  popup-writer:
+    # No container_name: scaled horizontally; NATS queue group `popup-writers` load-balances the writes.
+    build:
+      context: ..
+      dockerfile: services/popup_writer/Dockerfile
+    environment:
+      NATS_HOST: nats
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-contextpath}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-contextpath}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-contextpath}
+    deploy:
+      replicas: 2
+    depends_on:
+      nats:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  agent:
+    # No container_name: scaled horizontally; the NATS queue group `agent-workers`
+    # distributes ticks across all 3 replicas (JetStream partitioning by employee_id
+    # preserves per-employee ordering for edge-triggered rules).
+    build:
+      context: ..
+      dockerfile: services/agent/Dockerfile
+    environment:
+      NATS_HOST: nats
+      RULES_FILE: /rules.json
+    volumes:
+      - ${RULES_FILE:-../rules.json}:/rules.json:ro
+    deploy:
+      replicas: 3
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+      - contextpath-network
+    restart: unless-stopped
+
+  streamer:
+    container_name: contextpath-streamer
+    build:
+      context: ..
+      dockerfile: services/streamer/Dockerfile
+    environment:
+      NATS_HOST: nats
+      # In production, archives are pulled from the S3/MinIO work queue rather than a local mount.
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-contextpath}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-contextpath}
+      TICK_MS: ${TICK_MS:-25}
+    depends_on:
+      nats:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - contextpath-network
+    restart: "no"

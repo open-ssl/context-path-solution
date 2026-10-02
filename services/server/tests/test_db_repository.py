@@ -125,9 +125,9 @@ async def test_fetch_audits_maps_rows_and_forwards_args(monkeypatch: pytest.Monk
     pool = FakePool(rows=rows)
     monkeypatch.setitem(repository._state, "pool", pool)
 
-    result = await repository.fetch_audits(employee="emp-1", rule="r1", limit=25)
+    result = await repository.fetch_audits(employee="emp-1", rule="r1")
 
     assert len(result) == 1
     assert result[0].employee == "emp-1"
     assert result[0].rule == "r1"
-    assert pool.fetch_args == ("emp-1", "r1", 25)
+    assert pool.fetch_args == ("emp-1", "r1")

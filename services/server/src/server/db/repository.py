@@ -31,7 +31,6 @@ _FETCH_SQL = """
     WHERE ($1::text IS NULL OR employee = $1)
       AND ($2::text IS NULL OR rule = $2)
     ORDER BY ts DESC
-    LIMIT $3
 """
 
 _state: dict[str, asyncpg.Pool | None] = {"pool": None}
@@ -75,6 +74,6 @@ async def close_pool() -> None:
         logger.info("database pool closed")
 
 
-async def fetch_audits(employee: str | None, rule: str | None, limit: int) -> list[Popup]:
-    rows = await get_pool().fetch(_FETCH_SQL, employee, rule, limit)
+async def fetch_audits(employee: str | None, rule: str | None) -> list[Popup]:
+    rows = await get_pool().fetch(_FETCH_SQL, employee, rule)
     return [Popup.model_validate(dict(row)) for row in rows]

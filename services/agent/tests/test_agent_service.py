@@ -119,11 +119,11 @@ async def test_per_employee_state_is_isolated() -> None:
 
 
 async def test_case_insensitive_matching() -> None:
-    """Проверка регистронезависимости (Delete == delete, OUTLOOK.EXE == outlook.exe)."""
+    """Case-insensitive matching (Delete == delete, OUTLOOK.EXE == outlook.exe)."""
     collector = Collector()
     processor = make_processor(collector)
 
-    # В правиле прописано OUTLOOK.EXE и FW:*, а мы передаем нижний регистр
+    # The rule declares OUTLOOK.EXE and FW:*, but we pass lowercase values.
     e = RawEvent(
         employee="emp-1",
         ts=TS,
@@ -136,11 +136,11 @@ async def test_case_insensitive_matching() -> None:
 
 
 async def test_null_and_missing_fields_are_ignored() -> None:
-    """Условия с null или отсутствующие в событии поля не блокируют совпадение."""
+    """Conditions set to null or missing from the event do not block a match."""
     collector = Collector()
     processor = make_processor(collector)
 
-    # Поля window_title, clipboard, ocr переданы как None — правило должно сработать
+    # window_title, clipboard, ocr are passed as None — the rule should still fire.
     e = RawEvent(
         employee="emp-1",
         ts=TS,
@@ -158,17 +158,17 @@ async def test_null_and_missing_fields_are_ignored() -> None:
 
 
 async def test_list_matching_or_logic() -> None:
-    """Проверка совпадения со списком (process: ["OUTLOOK.EXE", "olk.exe"])."""
+    """List matching with OR logic (process: ["OUTLOOK.EXE", "olk.exe"])."""
     collector = Collector()
     processor = make_processor(collector)
 
-    # Проверяем второй процесс из списка ("olk.exe")
+    # Check the second process in the list ("olk.exe").
     e1 = RawEvent(
         employee="emp-1",
         ts=TS,
         context=MatchContext(click="FW: test", process="olk.exe"),
     )
-    # Проверяем первый процесс из списка ("OUTLOOK.EXE")
+    # Check the first process in the list ("OUTLOOK.EXE").
     e2 = RawEvent(
         employee="emp-2",
         ts=TS,
@@ -182,7 +182,7 @@ async def test_list_matching_or_logic() -> None:
 
 
 async def test_complex_wildcard_matching() -> None:
-    """Проверка сложных шаблонов с wildcard (*) в середине и конце строки."""
+    """Complex wildcard (*) patterns in the middle and at the end of the string."""
     collector = Collector()
     processor = make_extended_processor(collector)
 
@@ -203,18 +203,18 @@ async def test_complex_wildcard_matching() -> None:
 
 
 async def test_partial_match_fails_when_all_conditions_required() -> None:
-    """Если не совпало хотя бы одно обязательное условие в 'when' — попап не создается."""
+    """If at least one required condition in 'when' does not match, no popup is created."""
     collector = Collector()
     processor = make_extended_processor(collector)
 
-    # Клик и window_title совпали, но OCR содержит другой текст
+    # click and window_title match, but OCR contains different text.
     e = RawEvent(
         employee="emp-1",
         ts=TS,
         context=MatchContext(
             click="Delete",
             window_title="Account Details | Salesforce",
-            ocr="Click button to continue",  # Не совпадает с "Are you sure..."
+            ocr="Click button to continue",  # Does not match "Are you sure..."
         ),
     )
     popups = await processor.process(e)
@@ -239,8 +239,8 @@ async def test_process_batch_routes_per_employee_in_order() -> None:
 
 
 async def test_multiple_rules_triggered_in_single_event() -> None:
-    """Одно событие может активировать сразу несколько правил, если условия совпадают."""
-    # Составим набор правил, где 2 правила могут сработать одновременно
+    """A single event can trigger multiple rules at once when their conditions match."""
+    # Build a rule set where 2 rules can fire simultaneously.
     multi_rules = {
         "rules": [
             {

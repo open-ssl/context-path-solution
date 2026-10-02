@@ -27,8 +27,8 @@ async def test_health(client: httpx.AsyncClient) -> None:
 async def test_cache_hit_for_employee_and_rule(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple] = []
 
-    async def fake(employee: str | None, rule: str | None, limit: int) -> list[Popup]:
-        calls.append((employee, rule, limit))
+    async def fake(employee: str | None, rule: str | None) -> list[Popup]:
+        calls.append((employee, rule))
         return [_popup("emp-cr")]
 
     monkeypatch.setattr(repository, "fetch_audits", fake)
@@ -45,8 +45,8 @@ async def test_cache_hit_for_employee_and_rule(client: httpx.AsyncClient, monkey
 async def test_cache_hit_for_employee_only(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple] = []
 
-    async def fake(employee: str | None, rule: str | None, limit: int) -> list[Popup]:
-        calls.append((employee, rule, limit))
+    async def fake(employee: str | None, rule: str | None) -> list[Popup]:
+        calls.append((employee, rule))
         return [_popup("emp-only")]
 
     monkeypatch.setattr(repository, "fetch_audits", fake)
@@ -55,14 +55,14 @@ async def test_cache_hit_for_employee_only(client: httpx.AsyncClient, monkeypatc
     await client.get("/audit", params={"employee": "emp-only"})
 
     assert len(calls) == 1
-    assert calls[0] == ("emp-only", None, 50)
+    assert calls[0] == ("emp-only", None)
 
 
 async def test_unkeyed_query_bypasses_cache(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple] = []
 
-    async def fake(employee: str | None, rule: str | None, limit: int) -> list[Popup]:
-        calls.append((employee, rule, limit))
+    async def fake(employee: str | None, rule: str | None) -> list[Popup]:
+        calls.append((employee, rule))
         return []
 
     monkeypatch.setattr(repository, "fetch_audits", fake)
@@ -75,21 +75,8 @@ async def test_unkeyed_query_bypasses_cache(client: httpx.AsyncClient, monkeypat
     assert calls[0][0] is None
 
 
-async def test_limit_is_forwarded(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: dict[str, int] = {}
-
-    async def fake(employee: str | None, rule: str | None, limit: int) -> list[Popup]:
-        seen["limit"] = limit
-        return []
-
-    monkeypatch.setattr(repository, "fetch_audits", fake)
-
-    await client.get("/audit", params={"employee": "emp-lim", "limit": 5})
-    assert seen["limit"] == 5
-
-
 async def test_response_matches_spec_shape(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake(employee: str | None, rule: str | None, limit: int) -> list[Popup]:
+    async def fake(employee: str | None, rule: str | None) -> list[Popup]:
         return [_popup("emp-schema")]
 
     monkeypatch.setattr(repository, "fetch_audits", fake)

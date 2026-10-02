@@ -13,6 +13,5 @@ router = APIRouter()
 async def audit(
     employee: str | None = None,
     rule: str | None = None,
-    limit: int = 50,
 ) -> list[Popup]:
-    return await get_audits(employee=employee, rule=rule, limit=limit)
+    return await get_audits(employee=employee, rule=rule)

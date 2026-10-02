@@ -9,7 +9,7 @@ endef
         lint format benchmark gen-data gen-run check-docker
 
 PROJECT_PATH ?= .
-COMPOSE := docker compose -f .deployment/docker-compose.yml --project-directory .
+COMPOSE := docker compose -f docker-compose.yml --project-directory .
 
 # ---------------------------------------------------------------------------
 # Environment detection (evaluated once at parse time).
@@ -121,7 +121,6 @@ benchmark:
 	else \
 		echo "ERROR: need uv or python3 to run the benchmark. $(INSTALL_UV)"; exit 1; \
 	fi
-
 
 gen-data:
 	@if [ -n "$(HAS_UV)" ]; then \

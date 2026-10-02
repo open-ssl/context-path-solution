@@ -10,13 +10,13 @@ CACHE_TTL_SECONDS = 60
 
 
 @cache(expire=CACHE_TTL_SECONDS)
-async def _get_audits_cached(employee: str, rule: str | None, limit: int) -> list[Popup]:
-    return await repository.fetch_audits(employee=employee, rule=rule, limit=limit)
+async def _get_audits_cached(employee: str, rule: str | None) -> list[Popup]:
+    return await repository.fetch_audits(employee=employee, rule=rule)
 
 
-async def get_audits(employee: str | None = None, rule: str | None = None, limit: int = 50) -> list[Popup]:
+async def get_audits(employee: str | None = None, rule: str | None = None) -> list[Popup]:
     # Keyed queries go through the Redis-backed read-through cache; unkeyed queries hit
     # TimescaleDB directly to avoid caching heavy full scans.
     if employee:
-        return await _get_audits_cached(employee=employee, rule=rule, limit=limit)
-    return await repository.fetch_audits(employee=None, rule=rule, limit=limit)
+        return await _get_audits_cached(employee=employee, rule=rule)
+    return await repository.fetch_audits(employee=None, rule=rule)
