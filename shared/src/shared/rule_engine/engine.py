@@ -14,10 +14,10 @@ _PLACEHOLDER = re.compile(r"\{(\w+)\}")
 
 class MatchContext(BaseModel):
     click: str | None = None
-    clipboard: str | None = None
+    process: str | list[str] | None = None
     window_title: str | None = None
-    process: str | None = None
-    ocr: list[str] = []
+    clipboard: str | None = None
+    ocr: str | None = None
 
 
 class RuleMatch(BaseModel):
@@ -40,12 +40,6 @@ class _CompiledRule:
     def match(self, ctx: MatchContext) -> dict[str, str] | None:
         matched: dict[str, str] = {}
         for field, matcher in self.matchers.items():
-            if field == "ocr":
-                block = next((text for text in ctx.ocr if matcher.match(text)), None)
-                if block is None:
-                    return None
-                matched["ocr"] = block
-                continue
             candidate = getattr(ctx, field)
             if candidate is None or not matcher.match(candidate):
                 return None

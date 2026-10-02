@@ -1,17 +1,62 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import signal
+
+from nats.aio.msg import Msg
+from shared.config import settings
+from shared.models.popup import Popup
+from shared.rule_engine import RuleEngine
+
+from agent.core import bus
+from agent.core.rules import load_ruleset
+from agent.services.agent_service import AgentProcessor, RawEvent
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("agent")
 
+SUBJECT_IN = "events.raw"
+SUBJECT_OUT = "popups.detected"
+
 
 async def run() -> None:
     logger.info("agent starting")
-    # Stage 5: load rules.json, subscribe to ticks.*, evaluate rules, publish popups.detected.
-    await asyncio.Event().wait()
+    ruleset = load_ruleset(settings.RULES_FILE)
+    client = await bus.connect(settings.nats_url)
+
+    async def publish(popup: Popup) -> None:
+        await client.publish(SUBJECT_OUT, popup.model_dump_json().encode())
+
+    processor = AgentProcessor(lambda: RuleEngine(ruleset.rules), publish)
+
+    async def handler(msg: Msg) -> None:
+        try:
+            event = RawEvent.model_validate_json(msg.data)
+        except Exception:
+            logger.exception("dropping malformed event message")
+            return
+        await processor.process(event)
+
+    # No queue group: edge-triggered state is per-employee, so a single consumer
+    # keeps each employee's event order and firing state consistent.
+    await client.subscribe(SUBJECT_IN, cb=handler)
+    logger.info("subscribed to %s, publishing matches to %s", SUBJECT_IN, SUBJECT_OUT)
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with contextlib.suppress(NotImplementedError):
+            loop.add_signal_handler(sig, stop.set)
+
+    try:
+        await stop.wait()
+    finally:
+        logger.info("agent shutting down")
+        await client.drain()
+        logger.info("agent stopped")
 
 
 def main() -> None:

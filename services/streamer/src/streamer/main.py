@@ -10,7 +10,8 @@ logger = logging.getLogger("streamer")
 
 async def run() -> None:
     logger.info("streamer starting")
-    # Stage 5: discover /data/*.tar.gz, stream one task per archive, publish ticks.<employee_id>.
+    # Stage 6: discover /data/*.tar.gz, stream one task per archive, k-way merge by ts,
+    # pace one-second ticks by TICK_MS, and publish raw events to events.raw.
     await asyncio.Event().wait()
 
 

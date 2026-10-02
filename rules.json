@@ -1,18 +1,29 @@
-[
-  {
-    "id": "rule_01_default_click",
-    "title": "Default Activity Monitor",
-    "trigger_events": [
-      "click",
-      "clipboard_change"
-    ],
-    "conditions": {
-      "active_window": "*",
-      "clipboard": null
+{
+  "rules": [
+    {
+      "id": "forwarded-email-opened",
+      "when": { "click": "FW:*", "process": ["OUTLOOK.EXE", "olk.exe"], "window_title": null, "clipboard": null, "ocr": null },
+      "popup": { "title": "Forwarded email", "body": "You opened a forwarded email: {click}" }
     },
-    "formatters": {
-      "title": "User Action Detected",
-      "text": "Event triggered on window: {active_window}"
+    {
+      "id": "urgent-email-opened",
+      "when": { "click": "*urgent*", "process": ["OUTLOOK.EXE", "olk.exe"] },
+      "popup": { "title": "Urgent email", "body": "{click}" }
+    },
+    {
+      "id": "salesforce-record-deleted",
+      "when": { "click": "Delete", "window_title": "*| Salesforce*", "ocr": "Are you sure you want to delete*" },
+      "popup": { "title": "Record deleted", "body": "Deleted in Salesforce: {window_title}" }
+    },
+    {
+      "id": "jira-ticket-done",
+      "when": { "click": "Done", "window_title": "* - Jira - *", "process": null },
+      "popup": { "title": "Ticket moved to Done", "body": "{window_title}" }
+    },
+    {
+      "id": "invoice-ready-to-attach",
+      "when": { "clipboard": "INV-*", "process": ["OUTLOOK.EXE", "olk.exe"] },
+      "popup": { "title": "Invoice in clipboard", "body": "You copied {clipboard}. Attach the invoice to this email?" }
     }
-  }
-]
+  ]
+}

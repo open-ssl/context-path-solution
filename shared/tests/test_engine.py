@@ -68,11 +68,11 @@ def test_missing_condition_is_ignored(engine: RuleEngine) -> None:
     assert matches[0].body == "PROJ-1 - Jira - Chrome"
 
 
-def test_ocr_list_condition(engine: RuleEngine) -> None:
+def test_ocr_condition(engine: RuleEngine) -> None:
     ctx = MatchContext(
         click="Delete",
         window_title="Acme Lead | Salesforce",
-        ocr=["random text", "Are you sure you want to delete this record?"],
+        ocr="Are you sure you want to delete this record?",
     )
     matches = engine.evaluate(ctx)
     assert [m.rule for m in matches] == ["salesforce-record-deleted"]
